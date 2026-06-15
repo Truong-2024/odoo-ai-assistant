@@ -69,9 +69,9 @@ backend/
 
 | 💬 Giao Diện Tương Tác (Chat UI) | ⚙️ Điều Hướng API (Swagger UI) |
 | --- | --- |
-| ![Chat UI](./Screenshot_1.png) | ![Swagger UI](./Screenshot_2.png) |
+| ![Chat UI](screenshot_1.png) | ![Swagger UI](screenshot_2.png) |
 
 ### 🛠️ Luồng Xử Lý Dữ Liệu Thời Gian Thực (Terminal Logs)
-![Terminal Logs](./Screenshot_3.png)
+![Terminal Logs](screenshot_3.png)
 
 *Hình ảnh thực tế vận hành hệ thống phối hợp Multi-Agent và bóc tách dữ liệu.*
