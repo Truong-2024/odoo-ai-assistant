@@ -69,11 +69,13 @@ backend/
 
 
 
-### 1. Giao diện tương tác thông minh (Chat UI)
-![Chat UI](Screenshot 2026-06-15 214113.png)
+## 🖼️ Giao Diện Hệ Thống (Demo Screenshots)
 
-### 2. Hệ thống quản lý tài liệu API (Swagger UI)
-![API Docs](./screenshots/api_docs.png)
+| 💬 Giao Diện Tương Tác (Chat UI) | ⚙️ Điều Hướng API (Swagger UI) |
+| --- | --- |
+| ![Chat UI](./screenshots/Screenshot%202026-06-15%20214113.png) | ![Swagger UI](./screenshots/Screenshot%202026-06-15%20214536.png) |
 
-### 3. Luồng xử lý dữ liệu thời gian thực (Terminal Logs)
-![Terminal Logs](./screenshots/terminal_log.png)
+### 🛠️ Luồng Xử Lý Dữ Liệu Thời Gian Thực (Terminal Logs)
+![Terminal Logs](./screenshots/Screenshot%202026-06-15%20214638.png)
+
+*Hình ảnh thực tế vận hành hệ thống phối hợp Multi-Agent và bóc tách dữ liệu.*
