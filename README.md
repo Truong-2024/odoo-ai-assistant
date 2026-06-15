@@ -35,6 +35,16 @@ Hệ thống được thiết kế theo mô hình **Supervisor Agent Pattern** p
 - **Output Standardization:** Đồng bộ cấu trúc phản hồi JSON đầu ra (`status`, `answer`, `source`, `timestamp`) giúp đơn giản hóa việc tích hợp UI/UX ở tầng Frontend.
 
 ---
+## 🖼️ Giao Diện Hệ Thống (Demo Screenshots)
+
+| 💬 Giao Diện Tương Tác (Chat UI) | ⚙️ Điều Hướng API (Swagger UI) |
+| --- | --- |
+| ![Chat UI](screenshot_1.png) | ![Swagger UI](screenshot_2.png) |
+
+### 🛠️ Luồng Xử Lý Dữ Liệu Thời Gian Thực (Terminal Logs)
+![Terminal Logs](screenshot_3.png)
+
+*Hình ảnh thực tế vận hành hệ thống phối hợp Multi-Agent và bóc tách dữ liệu.*
 
 ## 📂 Sơ Đồ Thư Mục Mã Nguồn (Repository Structure)
 
@@ -65,13 +75,4 @@ backend/
 └── requirements.txt               # Danh sách thư viện phụ thuộc của dự án
 
 
-## 🖼️ Giao Diện Hệ Thống (Demo Screenshots)
 
-| 💬 Giao Diện Tương Tác (Chat UI) | ⚙️ Điều Hướng API (Swagger UI) |
-| --- | --- |
-| ![Chat UI](screenshot_1.png) | ![Swagger UI](screenshot_2.png) |
-
-### 🛠️ Luồng Xử Lý Dữ Liệu Thời Gian Thực (Terminal Logs)
-![Terminal Logs](screenshot_3.png)
-
-*Hình ảnh thực tế vận hành hệ thống phối hợp Multi-Agent và bóc tách dữ liệu.*
