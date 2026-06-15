@@ -63,3 +63,12 @@ backend/
 │   └── main.py                    # Cửa ngõ API Gateway khởi chạy hệ thống FastAPI
 ├── .env.example                   # Tệp cấu hình mẫu các API Key hệ thống
 └── requirements.txt               # Danh sách thư viện phụ thuộc của dự án
+
+
+## 🖼️ Giao Diện Hệ Thống (Demo Screenshots)
+
+| Giao Diện Trực Quan (Chat UI) | Tài Liệu API (Swagger Docs) |
+| --- | --- |
+| ![Chat UI](./screenshots/chat_ui.png) | ![Swagger UI](./screenshots/dashboard.png) |
+
+*Hình ảnh thực tế luồng xử lý và Dashboard điều hướng API hệ thống.*
