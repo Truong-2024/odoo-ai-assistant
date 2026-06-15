@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: odoo_postgres
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  odoo:
+    image: odoo:17
+
+    container_name: odoo17
+
+    depends_on:
+      - postgres
+
+    ports:
+      - "8069:8069"
+
+    environment:
+      HOST: postgres
+      USER: postgres
+      PASSWORD: postgres123
+
+volumes:
+  postgres_data:
