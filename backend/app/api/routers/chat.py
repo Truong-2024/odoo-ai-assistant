@@ -44,7 +44,7 @@ def extract_file_text(file_path: str, file_ext: str) -> str:
 
 @router.post("/message")
 async def send_message(
-    request: Request,                                
+    request: Request,                                 
     message: str = Form(""),
     thread_id: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
@@ -73,6 +73,7 @@ async def send_message(
         file_url = None
         is_file_card = False
         file_meta = None
+        is_image = False  # Khởi tạo mặc định cho biến check ảnh
 
         # ================= FILE PROCESSING =================
         if file:
@@ -104,7 +105,7 @@ async def send_message(
                     os.remove(file_path)
                 return {"status": "cancelled"}
 
-            # 🔥 SỬA LỖI: Kiểm tra định dạng file để định tuyến thông minh
+            # 🔥 KIỂM TRA ĐỊNH DẠNG FILE ĐỂ ĐỊNH TUYẾN THÔNG MINH
             is_image = ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]
 
             if is_image:
@@ -221,7 +222,7 @@ async def send_message(
         structure_keywords = ["bao nhiêu chương", "bằng nào chương", "có mấy chương", "mục lục", "cấu trúc"]
         is_structure_query = any(kw in query_lower for kw in structure_keywords)
 
-        if is_explicit_summary_query and (file and not ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]):
+        if is_explicit_summary_query and (file and not is_image):
             logger.info("🎯 [GLOBAL QUERY DETECTED] Phát hiện yêu cầu tóm tắt tài liệu rõ ràng. Kích hoạt force_summary.")
             is_auto_summary = True
         elif is_structure_query:
@@ -234,16 +235,29 @@ async def send_message(
             return {"status": "cancelled", "detail": "Hủy trước khi chạy Agent"}
 
         # ================= LANGGRAPH WITH MONITOR =================
+        # Khởi tạo state cơ bản phục vụ cho LangGraph
+        graph_state = {
+            "messages": [HumanMessage(content=user_content)],
+            "active_document": active_document,  
+            "file_meta": file_meta,
+            "pending_summary": is_auto_summary,
+            "force_summary": is_auto_summary,   
+            "is_auto_summary": is_auto_summary
+        }
+
+        # 🔥 BẺ LÁI ĐỊNH TUYẾN CỨNG: Nếu là ảnh, áp đặt luồng chạy thẳng vào Vision Agent
+        # Ngăn chặn Supervisor tự ý định tuyến nhầm vào Document Agent
+        if is_image or (active_document and any(active_document.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"])):
+            logger.info(f"📸 [FORCE VISION ROUTE] Ép cấu trúc LangGraph chạy trực tiếp vào Vision Agent.")
+            graph_state["current_agent"] = "vision"
+            graph_state["fallback_agent"] = "vision"
+            graph_state["pending_summary"] = False
+            graph_state["force_summary"] = False
+            graph_state["is_auto_summary"] = False
+
         langgraph_task = asyncio.create_task(
             langgraph_app.ainvoke(
-                {
-                    "messages": [HumanMessage(content=user_content)],
-                    "active_document": active_document,  
-                    "file_meta": file_meta,
-                    "pending_summary": is_auto_summary,
-                    "force_summary": is_auto_summary,   
-                    "is_auto_summary": is_auto_summary
-                },
+                graph_state,
                 config=config
             )
         )
@@ -319,7 +333,7 @@ async def send_message(
             "ai_message_id": ai_msg_id,
             "response": result["messages"][-1].content,
             "thread_id": thread_id,
-            "current_agent": result.get("current_agent", "document"),
+            "current_agent": result.get("current_agent", "vision" if is_image else "document"),
             "status": "success"
         }
 

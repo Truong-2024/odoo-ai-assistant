@@ -34,7 +34,7 @@ async def rewrite_contextual_query_v2(
         # Khởi tạo mô hình
         llm = ChatGroq(
             model="llama-3.1-8b-instant",
-            temperature=0.0,  # Giữ nguyên độ chính xác cao nhất
+            temperature=0.0,  # Giữ nguyên độ chính xác cao nhất để kiểm soát cấu trúc output
             api_key=groq_api_key,
             max_tokens=250
         )
@@ -58,7 +58,9 @@ async def rewrite_contextual_query_v2(
                 
                 "🔥 CÁC QUY TẮC BẮT BUỘC ĐỂ TRÁNH LỖI HỆ THỐNG:\n"
                 "1. TUYỆT ĐỐI GIỮ NGUYÊN Ý ĐỊNH HỎI: Nếu câu hỏi chứa một chủ đề hoàn toàn mới (Ví dụ: 'Thuyết hữu dụng', 'Hàm sản xuất'), KHÔNG ĐƯỢC PHÉP tự ý bẻ lái câu hỏi về chủ đề cũ trong lịch sử chat.\n"
-                "2. SỬA LỖI CHÍNH TẢ & BÙ DẤU: Tự động bổ sung dấu tiếng Việt và sửa lỗi gõ sai.\n"
+                "2. SỬA LỖI CHÍNH TẢ & BÙ DẤU CHUẨN XÁC: Tự động bổ sung dấu tiếng Việt và sửa lỗi gõ sai cấu trúc từ.\n"
+                "   ⚠️ CRITICAL RULE FOR VIETNAMESE VERBS: Không bao giờ được bóp méo, làm sai lệch hoặc đổi tên các động từ hành động cốt lõi của người dùng. "
+                "Tuyệt đối KHÔNG ĐƯỢC biến đổi từ 'tóm tắt' thành bất cứ từ sai chính tả nào khác (ví dụ: KHÔNG đổi thành 'tôm tát', 'tôm tắt'). Giữ nguyên dạng chuẩn hóa: 'tóm tắt', 'phân tích', 'kiểm tra'.\n"
                 "3. KHÔNG ĐƯỢC NHẠI LẠI LỊCH SỬ: Trường 'clean_query' CHỈ ĐƯỢC CHỨA DUY NHẤT một câu hỏi ngắn gọn độc lập của lượt hỏi hiện tại.\n"
                 "4. ĐỊNH TUYẾN NGỮ CẢNH ĐỘNG (QUAN TRỌNG): Dựa vào các từ khóa trong câu hỏi mới và dòng chảy hội thoại trong lịch sử chat, hãy đối chiếu với 'DANH SÁCH FILE ĐANG CÓ' để chọn ra tên file phù hợp nhất điền vào trường 'predicted_file'.\n"
                 "   - Nếu câu hỏi hỏi về AI, mạng nơ-ron -> Chọn file liên quan đến trí tuệ nhân tạo.\n"
@@ -87,10 +89,10 @@ async def rewrite_contextual_query_v2(
         clean_result = result.clean_query.replace("\n", " ").strip()
         
         # Kiểm tra tính hợp lệ của file được dự đoán để tránh lỗi bốc trùng tên lạ
-        final_file = result.predicted_file.strip("- ")
+        final_file = result.predicted_file.strip("- ") if result.predicted_file else ""
         if final_file not in active_files:
             # Fallback về file đầu tiên hoặc file cuối cùng hoạt động nếu LLM điền sai tên file
-            final_file = active_files[0]
+            final_file = active_files[0] if active_files else ""
 
         logger.info(f"🧠 [REWRITER REASONING]: {result.reasoning}")
         logger.info(f"🔄 [ROUTE ROUTING] File đích được chọn: '{final_file}'")
