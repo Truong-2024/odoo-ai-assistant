@@ -5,7 +5,7 @@ import { X } from 'lucide-react';
 
 export default function DataPreviewPanel() {
   const {
-    messages, // <-- ĐÃ THÊM: Lấy danh sách tin nhắn để truy vết tên file gốc
+    messages, // Lấy danh sách tin nhắn để truy vết tên file gốc
     activeDocument,
     setIsPreviewOpen,
     setActiveDocument
@@ -30,13 +30,15 @@ export default function DataPreviewPanel() {
     }, 250);
   };
 
+  // ✅ SỬA LỖI ĐƯỜNG DẪN: Tự động tách lấy Base URL từ biến môi trường Render, nếu không có mới dùng localhost
+  const backendBaseUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:8000';
   const iframeSrc = activeDocument
-    ? `http://localhost:8000${activeDocument}`
+    ? `${backendBaseUrl}${activeDocument}`
     : 'about:blank';
 
-  // 🛠️ THAY ĐỔI TẠI ĐÂY: Tìm tin nhắn có fileUrl khớp với tài liệu đang active để lấy ra tên file gốc (original name)
-  const matchedMessage = messages.find(m => m.fileUrl === activeDocument);
-  const originalFileName = matchedMessage?.fileName || activeDocument.split('/').pop() || activeDocument;
+  // ✅ SỬA LỖI TYPESCRIPT: Thêm dấu ? trước .split để bảo vệ an toàn phòng trường hợp activeDocument là null
+  const matchedMessage = messages?.find(m => m.fileUrl === activeDocument);
+  const originalFileName = matchedMessage?.fileName || activeDocument?.split('/').pop() || 'Tài liệu';
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
@@ -62,7 +64,7 @@ export default function DataPreviewPanel() {
           {activeDocument && (
             <div className="mb-4 flex items-center justify-between flex-shrink-0">
               <div>
-                {/* 🛠️ THAY ĐỔI TẠI ĐÂY: Hiển thị originalFileName thay vì cắt chuỗi UUID từ URL */}
+                {/* Hiển thị originalFileName thay vì cắt chuỗi UUID từ URL */}
                 <p className="font-medium text-foreground truncate max-w-[280px]">
                   {originalFileName}
                 </p>
