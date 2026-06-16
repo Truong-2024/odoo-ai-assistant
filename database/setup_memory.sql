@@ -1,7 +1,3 @@
--- =============================================
--- DATABASE SETUP cho Odoo AI Assistant (Đã đồng bộ với Code)
--- =============================================
-
 -- 1. Bảng lưu trữ cuộc hội thoại (Khớp với code Python)
 CREATE TABLE IF NOT EXISTS chat_threads (
     thread_id TEXT PRIMARY KEY,
