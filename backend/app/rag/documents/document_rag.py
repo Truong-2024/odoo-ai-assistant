@@ -1,43 +1,47 @@
 import os
 import logging
+import platform
 from typing import List, Optional
-import numpy as np 
+# import numpy as np  <-- ❌ XÓA: Không sử dụng trong file này, gây tốn RAM vô ích
 import json
 import asyncio
-# Cấu hình OCR Tesseract cục bộ
-TESSERACT_DIR = r"C:\Program Files\Tesseract-OCR"
-if os.path.exists(TESSERACT_DIR):
-    # 1. Bổ sung vào PATH chạy nội bộ của Python
-    if TESSERACT_DIR not in os.environ["PATH"]:
+
+# --- CẤU HÌNH OCR TESSERACT LINH HOẠT ĐA NỀN TẢNG (WINDOWS & LINUX) ---
+if platform.system() == "Windows":
+    TESSERACT_DIR = r"C:\Program Files\Tesseract-OCR"
+    TESSERACT_CMD = os.path.join(TESSERACT_DIR, "tesseract.exe")
+else:
+    TESSERACT_DIR = "/usr/bin"
+    TESSERACT_CMD = "/usr/bin/tesseract"
+
+if os.path.exists(TESSERACT_CMD) or (platform.system() == "Windows" and os.path.exists(TESSERACT_DIR)):
+    if platform.system() == "Windows" and TESSERACT_DIR not in os.environ["PATH"]:
         os.environ["PATH"] = TESSERACT_DIR + os.pathsep + os.environ["PATH"]
     
-    # 2. Định nghĩa biến môi trường bắt buộc cho bộ thư viện unstructured
     os.environ["OCR_AGENT"] = "tesseract"
     
-    # 3. Đề phòng nếu tầng dưới gọi pytesseract thuần
     try:
         import pytesseract
-        pytesseract.pytesseract.tesseract_cmd = os.path.join(TESSERACT_DIR, "tesseract.exe")
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
     except ImportError:
         pass
 else:
     logging.getLogger(__name__).warning(
-        f"⚠️ [OCR PATCH] Không tìm thấy thư mục Tesseract tại: {TESSERACT_DIR}. "
-        f"Vui lòng kiểm tra lại đường dẫn cài đặt phần mềm!"
+        f"⚠️ [OCR PATCH] Không tìm thấy phần mềm Tesseract tại: {TESSERACT_CMD}. "
+        f"Tính năng đọc ảnh/PDF scan sẽ bị tạm ẩn."
     )
 
-# Thư viện LangChain và Tiện ích hỗ trợ
+# Thư viện LangChain và Tiện ích hỗ trợ (Giữ lại các thành phần nhẹ)
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
-from langchain_community.cross_encoders import HuggingFaceCrossEncoder
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import CrossEncoderReranker
+# ❌ XÓA các import nặng (CrossEncoder, Reranker, Unstructured) khỏi phần đầu trang này
+
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.pydantic_v1 import BaseModel, Field
 
-# Loaders hệ thống
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredImageLoader
+# Loaders hệ thống (Chỉ giữ lại các loader nhẹ không dùng mô hình học máy)
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 
 from app.rag.documents.document_vector_store import DocumentVectorStore
 from fastapi import Request
@@ -60,9 +64,6 @@ class TableOfContents(BaseModel):
 
 # ASYNC FUNCTION: Trích xuất mục lục bất đồng bộ
 async def extract_toc_with_llm(first_few_pages_text: str, llm, request: Optional[Request] = None) -> SimpleNamespace:
-    """
-    Trích xuất mục lục từ văn bản thô bằng chế độ JSON thuần của Groq (Hỗ trợ ngắt kết nối)
-    """
     try:
         if request and await request.is_disconnected():
             logger.warning("🛑 [TOC] Huỷ bóc tách mục lục do Client ngắt kết nối.")
@@ -142,7 +143,18 @@ class DocumentRAG:
             self.llm = None
 
     def _init_reranker(self):
+        # 💡 TỐI ƯU CHO RENDER FREE: Kiểm tra môi trường trước tiên
+        if os.getenv("RENDER") == "true":
+            logger.info("[RERANKER] Đang chạy trên Cloud Render Free -> Bỏ qua hoàn toàn việc Import & Khởi tạo Reranker để cứu RAM.")
+            self.reranker = None
+            self.compression_retriever = self.vector_store.as_retriever(search_kwargs={"k": 12})
+            return
+
         try:
+            # 🔄 LAZY IMPORT: Chỉ import các thư viện nặng cân này khi chạy ở máy LOCAL (Windows/RAM khỏe)
+            from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+            from langchain.retrievers.document_compressors import CrossEncoderReranker
+
             cross_encoder = HuggingFaceCrossEncoder(
                 model_name=os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
             )
@@ -153,6 +165,8 @@ class DocumentRAG:
 
         base_retriever = self.vector_store.as_retriever(search_kwargs={"k": 25})
         if self.reranker:
+            # ContextualCompressionRetriever cũng thuộc khối nén nâng cao, chỉ cần ở Local
+            from langchain.retrievers import ContextualCompressionRetriever
             self.compression_retriever = ContextualCompressionRetriever(
                 base_compressor=self.reranker,
                 base_retriever=base_retriever
@@ -162,14 +176,12 @@ class DocumentRAG:
 
     # ====================== INDEX DOCUMENT ======================
     async def index_document(self, file_path: str, filename: str, request: Optional[Request] = None) -> int:
-        """Chỉ index chunks (Hỗ trợ ngắt kết nối an toàn + cleanup file)"""
         try:
             if request and await request.is_disconnected():
                 logger.warning(f"🛑 [INDEX] Huỷ ngay khi vào index_document: {filename}")
                 self._cleanup_file(file_path)
                 return 0
 
-            # Load document qua threadpool tránh block event loop
             docs = await run_in_threadpool(self._load_document, file_path, filename)
             
             if not docs:
@@ -180,11 +192,9 @@ class DocumentRAG:
                 self._cleanup_file(file_path)
                 return 0
 
-            # --- THỰC HIỆN BÓC TÁCH MỤC LỤC TRƯỚC KHI CẮT CHUNK ---
             toc_json = None
             if filename.lower().endswith('.pdf') and self.llm:
                 try:
-                    # Tăng từ docs[:5] lên docs[:12] để bao phủ hết mục lục bài giảng/slide nằm ở các trang sau
                     first_pages = docs[:12]
                     first_pages_text = "\n".join([d.page_content for d in first_pages])
                     if len(first_pages_text.strip()) > 50:
@@ -201,7 +211,6 @@ class DocumentRAG:
             chunks = self._split_documents(docs)
             logger.info(f"[INDEX START] {filename} -> {len(chunks)} chunks")
 
-            # Tiêm siêu dữ liệu vào từng mảnh văn bản nhỏ
             for idx, chunk in enumerate(chunks):
                 if request and idx % 10 == 0 and await request.is_disconnected():
                     logger.warning(f"🛑 [INDEX] Huỷ tiến trình khi đang cấu trúc metadata chunk thứ {idx}")
@@ -228,7 +237,6 @@ class DocumentRAG:
                     except Exception:
                         pass
 
-            # TẠO CHUNK ĐẶC BIỆT CHỨA TOÀN BỘ MỤC LỤC ĐỂ LƯU VÀO VECTOR STORE
             if toc_json and hasattr(toc_json, 'chapters') and toc_json.chapters:
                 try:
                     toc_lines = [f"Mục lục và cấu trúc tổng thể của tài liệu {filename}:"]
@@ -238,12 +246,11 @@ class DocumentRAG:
                     
                     toc_string_content = "\n".join(toc_lines)
                     
-                    # Tạo một Document độc lập đại diện cho cấu trúc tổng quát của file
                     toc_document = Document(
                         page_content=toc_string_content,
                         metadata={
                             "filename": filename,
-                            "doc_type": "table_of_contents",  # Đánh dấu tag đặc biệt để truy xuất thẳng khi đếm chương
+                            "doc_type": "table_of_contents",  
                             "source": file_path,
                             "page": 0,
                             "chunk_id": 9999
@@ -259,7 +266,6 @@ class DocumentRAG:
                 self._cleanup_file(file_path)
                 return 0
 
-            # Ghi dữ liệu vào Vector Store qua threadpool
             await run_in_threadpool(self.vector_store.add_documents, chunks, filename=filename)
 
             logger.info(f"Indexed {len(chunks)} chunks from {filename}")
@@ -271,7 +277,6 @@ class DocumentRAG:
             raise
 
     def _cleanup_file(self, file_path: str):
-        """Dọn dẹp file tạm an toàn khi tiến trình bị hủy dọc đường"""
         try:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
@@ -285,10 +290,13 @@ class DocumentRAG:
             loader = PyPDFLoader(file_path)
             docs = loader.load()
             
-            # Kiểm tra nếu PDF quét ảnh (Độ dài chuỗi text bóc ra quá ít) thì chuyển hướng qua OCR
             total_text_len = sum(len(d.page_content.strip()) for d in docs)
             if total_text_len < 100:
                 logger.warning(f"⚠️ [PDF DETECT] Phát hiện {filename} là PDF scan/ảnh. Ép chạy bằng Unstructured OCR...")
+                
+                # 🔄 LAZY IMPORT: Chỉ tải Unstructured loader siêu nặng khi thực sự gặp file PDF quét bằng ảnh
+                from langchain_community.document_loaders import UnstructuredImageLoader
+                
                 loader = UnstructuredImageLoader(
                     file_path, 
                     mode="elements",
@@ -301,11 +309,14 @@ class DocumentRAG:
         elif ext == ".docx":
             loader = Docx2txtLoader(file_path)
         elif ext in [".png", ".jpg", ".jpeg", ".tiff", ".webp"]:
+            # 🔄 LAZY IMPORT: Tương tự cho các định dạng ảnh thô
+            from langchain_community.document_loaders import UnstructuredImageLoader
+            
             loader = UnstructuredImageLoader(
                 file_path, 
                 mode="elements",
-                strategy="hi_res",       # Bắt buộc hi_res để kích hoạt OCR chất lượng cao
-                ocr_languages=["vie"]    # Ép Tesseract OCR bóc tách văn bản tiếng Việt
+                strategy="hi_res",      
+                ocr_languages=["vie"]    
             )
         else:
             raise ValueError(f"Unsupported file type: {ext}")
@@ -321,22 +332,14 @@ class DocumentRAG:
 
     # ====================== SUMMARIZE FULL DOCUMENT ======================
     async def summarize_full_document(self, filename: str, request: Optional[Request] = None) -> str:
-        """
-        Bộ tóm tắt thích ứng đa góc nhìn (Chuẩn ChatGPT Chuyên nghiệp)
-        Tự động nhận diện loại tài liệu và sinh cấu trúc đầu ra cá nhân hóa,
-        đồng thời tích hợp chặt chẽ cấu trúc mục lục tổng thể để chống sót chương.
-        """
         try:
             logger.info(f"[PRO SUMMARY] Khởi động bộ tóm tắt thích ứng cao cấp cho: {filename}")
-            
             if request and await request.is_disconnected():
                 logger.warning("🛑 [PRO SUMMARY] Huỷ ngay khi vừa gọi hàm.")
                 return f"Yêu cầu tóm tắt {filename} đã bị hủy."
 
-            # 1. TRUY VẤN SONG SCAN: Lấy cả chunk mục lục đặc biệt và các đoạn nội dung cốt lõi
             logger.info(f"🔍 [PRO SUMMARY] Đang gom ngữ cảnh nội dung và cấu trúc mục lục tổng thể...")
             
-            # Chạy đồng thời 2 câu truy vấn lên Vector Store để tiết kiệm thời gian (Giảm Latency)
             async def _get_toc():
                 return await run_in_threadpool(
                     self.vector_store.similarity_search_with_score,
@@ -358,12 +361,10 @@ class DocumentRAG:
             if not content_results and not toc_results:
                 return f"Không tìm thấy dữ liệu của tài liệu {filename} trong hệ thống."
 
-            # 2. XỬ LÝ VÀ ĐỒNG BỘ MẠCH NGỮ CẢNH (CONTEXT)
             toc_string = "Không tìm thấy dữ liệu mục lục cấu trúc sẵn có."
             if toc_results:
                 toc_string = toc_results[0][0].page_content.strip()
 
-            # Lọc trùng và sắp xếp các đoạn nội dung theo mạch trang tăng dần
             max_chunks = [doc for doc, score in content_results if doc.metadata.get("doc_type") != "table_of_contents"][:18]
             try:
                 max_chunks.sort(key=lambda x: (
@@ -376,7 +377,7 @@ class DocumentRAG:
             context_parts = []
             for i, doc in enumerate(max_chunks):
                 content = doc.page_content.strip()
-                compressed_content = " ".join(content.split())[:1200] # Giới hạn 1200 từ sâu cho mỗi chunk
+                compressed_content = " ".join(content.split())[:1200]
                 page_info = f"Trang {doc.metadata.get('page', '?')}"
                 if "chapter_belong" in doc.metadata:
                     page_info += f" - {doc.metadata['chapter_belong']}"
@@ -384,7 +385,6 @@ class DocumentRAG:
                 
             context = "\n\n".join(context_parts)
             
-            # 3. SIÊU PROMPT TƯ DUY 2 BƯỚC (CHUYÊN NGHIỆP CẤP ENTERPRISE)
             dynamic_prompt = f"""
 Bạn là một AI phân tích thông tin cấp cao sở hữu tư duy phân loại của ChatGPT Plus và Claude 3.5 Sonnet.
 Nhiệm vụ của bạn là đọc cấu trúc mục lục (TOC) và các chuỗi dữ liệu (CONTEXT) trích xuất từ file **{filename}** để lập một bản tóm tắt cá nhân hóa, cô đọng nhưng bao phủ toàn bộ nội dung trọng tâm.
@@ -397,11 +397,11 @@ Trước khi viết, hãy phân tích xem dữ liệu thực tế thuộc nhóm 
 - Nhóm 4: ẢNH CHỤP OCR / INFOGRAPHIC / THÔNG TIN SỰ KIỆN. (Cần cấu trúc: Chuỗi sự kiện tuyến tính, Thông điệp scannable cốt lõi).
 
 [BƯỚC 2: RÀNG BUỘC KIẾN TRÚC ĐẦU RA (QUY TẮC TỐI CAO)]
-1. TUYỆT ĐỐI KHÔNG ÁP DỤNG KHUÔN MẪU RẬP KHUÔN CỐ ĐỊNH. Bạn được toàn quyền tự sinh từ 3-4 tiêu đề lớn (##) kèm icon emoji thích hợp, tên tiêu đề phải phản ánh trực tiếp bản chất nội dung file (Ví dụ: ## 🎲 TIẾP CẬN GÁN NHÃN DỰA TRÊN XÁC SUẤT).
+1. TUYỆT ĐỐI KHÔNG ÁP DỤNG KHUÔN MẪU RẬP KHUÔN CỐ ĐỊNH. Bạn được toàn quyền tự sinh từ 3-4 tiêu đề lớn (##) kèm icon emoji thích hợp, tên tiêu đề phải phản ánh trực tiếp bản chất nội dung file.
 2. BAO PHỦ TOÀN DIỆN: Dựa vào cấu trúc Mục lục để phân bổ nội dung tóm tắt đều khắp các chương. Nghiêm cấm việc chỉ tóm tắt chương cuối và bỏ quên các chương giữa.
 3. LỌC BỎ CẶN OCR: Loại bỏ hoàn toàn các thông tin trùng lặp, lỗi lặp từ, lỗi xuống dòng ngắt quang do Tesseract OCR quét ảnh gây ra.
 4. KHÔNG VIẾT CÂU LƯỜI BIẾNG: Không viết các câu vô nghĩa như "Tài liệu không đề cập chi tiết". Hãy đi thẳng vào bản chất hành vi, công thức hoặc lý thuyết được mô tả trong ngữ cảnh.
-5. ĐỘ SÂU THÔNG TIN: Giữ lại các mốc thời gian, con số phần trăm (%), tên thuật toán hoặc thực thể chính. Viết đậm (**bold**) từ khóa quan trọng.
+5. ĐỘ SÂU THÔNG TIN: Giữ lại các mốc thời gian, con số phần百分 (%) hoặc thực thể chính. Viết đậm (**bold**) từ khóa quan trọng.
 
 ---
 [CẤU TRÚC MỤC LỤC TỔNG THỂ CỦA FILE]:
@@ -412,14 +412,13 @@ Trước khi viết, hãy phân tích xem dữ liệu thực tế thuộc nhóm 
 {context}
 
 ---
-BẢN TÓM TẮT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệp, scannable, ngắn gọn nhưng đầy đủ):
+BẢN TÓM TẶT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệp, scannable, ngắn gọn nhưng đầy đủ):
 """
             
             if request and await request.is_disconnected():
                 logger.warning("🛑 [PRO SUMMARY] Ngắt kết nối trước khi gọi API Groq.")
                 return "Yêu cầu đã bị hủy."
 
-            # 4. KÍCH HOẠT CHUỖI LLM FALLBACKS
             result = await self.llm.ainvoke(dynamic_prompt)
             logger.info(f"[PRO SUMMARY] Đã xuất bản bản tóm tắt cá nhân hóa thành công cho file: {filename}")
             return result.content.strip()
@@ -430,9 +429,6 @@ BẢN TÓM TẮT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệ
 
     # ====================== QUERY DOCUMENT (Q&A) ======================
     async def query_document(self, filename: str, query: str, k: int = 10, request: Optional[Request] = None) -> str:
-        """
-        Truy vấn chuẩn Enterprise Chatbot (Async Version có tính năng huỷ kết nối nhanh)
-        """
         try:
             logger.info(f"[ENTERPRISE QA] Tiếp nhận câu hỏi gốc: '{query}' cho tài liệu: {filename}")
 
@@ -440,7 +436,6 @@ BẢN TÓM TẮT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệ
                 logger.warning("🛑 [ENTERPRISE QA] Huỷ ngay khi tiếp nhận câu hỏi.")
                 return "Yêu cầu đã bị hủy."
 
-            # ĐÁNH CHẶN CÂU HỎI MỤC LỤC/SỐ CHƯƠNG TOÀN CỤC
             query_lower = query.lower()
             is_global_query = any(w in query_lower for w in ["chương", "mục lục", "tổng số", "bao nhiêu phần", "tổng quan"])
             
@@ -448,7 +443,6 @@ BẢN TÓM TẮT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệ
 
             if is_global_query:
                 logger.info(f"🔍 [GLOBAL RETRIEVAL] Đang ưu tiên bốc chunk cấu trúc tổng thể (table_of_contents) cho file: {filename}")
-                # Truy vấn thẳng chunk đặc biệt chứa toàn bộ mục lục cấu trúc qua bộ lọc metadata
                 toc_results = await run_in_threadpool(
                     self.vector_store.similarity_search_with_score,
                     query="Mục lục tổng thể cấu trúc danh sách tất cả các chương tài liệu số lượng",
@@ -458,10 +452,7 @@ BẢN TÓM TẮT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệ
                 if toc_results:
                     for doc, score in toc_results:
                         all_raw_results.append(doc)
-                    logger.info("🎯 [GLOBAL RETRIEVAL] Đã lấy thành công chunk cấu trúc đặc biệt đưa vào ngữ cảnh LLM.")
                 else:
-                    # FALLBACK DỰ PHÒNG KHI KHÔNG CÓ CHUNK TOC: Quét diện rộng lấy các chunk chứa từ khóa "Chương"
-                    logger.warning("🎯 [GLOBAL RETRIEVAL] Không tìm thấy chunk TOC! Kích hoạt quét từ khóa 'Chương' toàn file làm fallback...")
                     backup_results = await run_in_threadpool(
                         self.vector_store.similarity_search_with_score,
                         query="Danh sách cấu trúc gồm các Chương 1 Chương 2 Chương 3 Chương 4 Chương 5 Chương 6 Chương 7 Chương 8 Chương 9 Chương 10",
@@ -471,7 +462,6 @@ BẢN TÓM TẮT THÍCH ỨNG CAO CẤP (Định dạng Markdown chuyên nghiệ
                     for doc, score in backup_results:
                         all_raw_results.append(doc)
 
-            # Nếu không phải câu hỏi cấu trúc hoặc không thấy chunk đặc biệt/dự phòng nào, chạy luồng Multi-Query mở rộng ngữ nghĩa
             if not all_raw_results:
                 expanded_queries = [query] 
                 mq_prompt = f"""
@@ -522,14 +512,13 @@ CÂU HỎI GỐC: "{query}"
                 logger.warning("🛑 [ENTERPRISE QA] Huỷ trước bước chạy Cross-Encoder Reranker.")
                 return "Yêu cầu đã bị hủy."
 
-            # Phân tách luồng xử lý Reranker để tránh cắt ngắn mất chunk mục lục cấu trúc gốc
             if is_global_query and any(d.metadata.get("doc_type") == "table_of_contents" for d in all_raw_results):
                 selected_chunks = all_raw_results[:5]
             else:
-                if hasattr(self, 'reranker') and self.reranker:
-                    all_reranked = await run_in_threadpool(self.reranker.compress_documents, all_raw_results, query)
+                if self.reranker:
+                    selected_chunks = await run_in_threadpool(self.reranker.compress_documents, all_raw_results, query)
                     top_slice = 18 if is_global_query else 6
-                    selected_chunks = all_reranked[:top_slice] 
+                    selected_chunks = selected_chunks[:top_slice] 
                 else:
                     top_slice = 18 if is_global_query else 6
                     selected_chunks = all_raw_results[:top_slice]
@@ -554,11 +543,10 @@ CÂU HỎI GỐC: "{query}"
                     chapter_info = f" ({doc.metadata['chapter_belong']} - {doc.metadata.get('chapter_title', '')})"
                 
                 raw_content = doc.page_content.strip()
-                # Đối với chunk mục lục đặc biệt, giữ nguyên độ dài toàn vẹn cấu trúc
                 if doc.metadata.get("doc_type") == "table_of_contents":
                     clean_content = raw_content
                 else:
-                    clean_content = " ".join(raw_content.split())[:800] # Mở rộng giới hạn đọc của đoạn văn lên 800 từ chuyên sâu
+                    clean_content = " ".join(raw_content.split())[:800] 
                 
                 context_parts.append(f"[Đoạn dữ liệu {idx+1} - Trang {page_num}{chapter_info}]:\n{clean_content}")
 
@@ -572,9 +560,8 @@ QUY TẮC ĐÁNH GIÁ VÀ ĐỊNH DẠNG ĐẦU RA (BẮT BUỘC):
 2. **Quy tắc từ chối**: Nếu CONTEXT hoàn toàn không chứa thông tin, hãy trả lời đúng nguyên văn câu dưới đây:
 "Tôi không tìm thấy thông tin này trong tài liệu."
 3. **QUY TẮC ĐỊNH DẠNG (QUAN TRỌNG NHẤT)**: 
-   - KHÔNG LIỆT KÊ hoặc hiển thị lại các tiêu đề nhãn dạng "[Đoạn dữ liệu 1 - Trang...]", "[Đoạn dữ liệu 2]..." từ phần ngữ cảnh vào câu trả lời.
-   - Hãy tổng hợp thông tin một cách tự nhiên. Nếu nhiều đoạn dữ liệu cùng nói về một nội dung (ví dụ: cùng xác nhận tài liệu có 10 chương), hãy gộp lại thành MỘT kết luận duy nhất, ngắn gọn và trực tiếp.
-   - Không viết câu trả lời theo kiểu lặp đi lặp lại cấu trúc ngữ cảnh.
+   - KHÔNG LIỆT KÊ hoặc hiển thị lại các tiêu đề nhãn dạng "[Đoạn dữ liệu 1 - Trang...]" từ phần ngữ cảnh vào câu trả lời.
+   - Hãy tổng hợp thông tin một cách tự nhiên. Nếu nhiều đoạn dữ liệu cùng nói về một nội dung, hãy gộp lại thành MỘT kết luận duy nhất, ngắn gọn và trực tiếp.
 
 NGỮ CẢNH TÀI LIỆU (CONTEXT):
 {context}

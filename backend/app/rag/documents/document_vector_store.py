@@ -1,21 +1,31 @@
 import os
 from dotenv import load_dotenv
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGVector
 from sqlalchemy import text
 from langchain_core.documents import Document
 
 load_dotenv()
 
-
 class DocumentVectorStore:
     def __init__(self):
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=os.getenv(
-                "EMBEDDING_MODEL",
-                "sentence-transformers/all-MiniLM-L6-v2"
+        # Lấy tên model từ .env (mặc định là all-MiniLM-L6-v2)
+        embedding_model = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        hf_token = os.getenv("HF_TOKEN")
+
+        # 🔥 SỬA LỖI RAM: Kiểm tra điều kiện môi trường để nạp Embedding phù hợp
+        if hf_token:
+            # Bản chạy qua API Cloud (Tốn 0MB RAM - Dành cho Render Free)
+            from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
+            self.embeddings = HuggingFaceInferenceAPIEmbeddings(
+                api_key=hf_token,
+                model_name=embedding_model
             )
-        )
+            print(f"🚀 [VectorStore] Đang sử dụng HuggingFace Inference API Cloud (0MB RAM)")
+        else:
+            # Bản tải cục bộ về máy (Tốn ~400MB RAM - Dành cho Local chạy Offline)
+            from langchain_huggingface import HuggingFaceEmbeddings
+            self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
+            print(f"💻 [VectorStore] Đang tải mô hình {embedding_model} trực tiếp vào RAM Local")
 
         conn_string = os.getenv("POSTGRES_VECTOR_URI")
         if not conn_string:
@@ -29,29 +39,25 @@ class DocumentVectorStore:
         )
 
     # =========================
-    # ADD DOCUMENTS (FIXED)
+    # ADD DOCUMENTS
     # =========================
     def add_documents(self, documents, filename=None):
         """
         Add documents + chống duplicate theo filename
         """
-
-        # 🔥 FIX DUPLICATE: xoá dữ liệu cũ trước khi insert
         if filename:
             self.delete_document(filename)
 
         return self.vectorstore.add_documents(documents)
 
     # =========================
-    # DELETE DOCUMENT (FIXED & SECURE WITH EXPLICIT CAST)
+    # DELETE DOCUMENT (SAFE WITH EXPLICIT CAST)
     # =========================
     def delete_document(self, filename: str):
         """
         Xoá toàn bộ chunks theo filename thuộc đúng collection quy định.
-        Đã ép kiểu sang ::uuid để tránh lỗi xung đột kiểu dữ liệu với PostgreSQL.
         """
         try:
-            # Lấy tên collection được khởi tạo
             collection_name = self.vectorstore.collection_name
 
             sql = text("""
@@ -77,17 +83,8 @@ class DocumentVectorStore:
     def similarity_search(self, query: str, k: int = 10, filter: dict = None):
         return self.vectorstore.similarity_search(query, k=k, filter=filter)
         
-    def similarity_search_with_score(
-        self,
-        query: str,
-        k: int = 10,
-        filter: dict = None
-    ):
-        return self.vectorstore.similarity_search_with_score(
-            query=query,
-            k=k,
-            filter=filter
-        )
+    def similarity_search_with_score(self, query: str, k: int = 10, filter: dict = None):
+        return self.vectorstore.similarity_search_with_score(query=query, k=k, filter=filter)
         
     def as_retriever(self, **kwargs):
         return self.vectorstore.as_retriever(**kwargs)
