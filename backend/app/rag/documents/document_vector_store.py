@@ -10,22 +10,29 @@ class DocumentVectorStore:
     def __init__(self):
         # Lấy tên model từ .env (mặc định là all-MiniLM-L6-v2)
         embedding_model = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        
+        # Xử lý token đầu vào sạch sẽ, loại bỏ khoảng trắng thừa
         hf_token = os.getenv("HF_TOKEN")
-
-        # 🔥 SỬA LỖI RAM: Kiểm tra điều kiện môi trường để nạp Embedding phù hợp
         if hf_token:
-            # Bản chạy qua API Cloud (Tốn 0MB RAM - Dành cho Render Free)
-            from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
-            self.embeddings = HuggingFaceInferenceAPIEmbeddings(
-                api_key=hf_token,
-                model_name=embedding_model
+            hf_token = hf_token.strip()
+
+        # 🔥 SỬA LỖI MẠNG & RAM: Ép hệ thống dùng Endpoint độc lập khi có token hợp lệ
+        if hf_token and hf_token.startswith("hf_"):
+            from langchain_huggingface import HuggingFaceEndpointEmbeddings
+            
+            # Khởi tạo qua cổng kết nối Endpoint Cloud chuyên dụng (0MB RAM - Chống NameResolutionError)
+            self.embeddings = HuggingFaceEndpointEmbeddings(
+                model=embedding_model,
+                huggingfacehub_api_token=hf_token,
+                task="feature-extraction"
             )
-            print(f"🚀 [VectorStore] Đang sử dụng HuggingFace Inference API Cloud (0MB RAM)")
+            print(f"🚀 [VectorStore] Kích hoạt thành công HuggingFace Endpoint Cloud (0MB RAM)")
         else:
-            # Bản tải cục bộ về máy (Tốn ~400MB RAM - Dành cho Local chạy Offline)
             from langchain_huggingface import HuggingFaceEmbeddings
+            
+            # Bản tải cục bộ về máy (Tốn ~400MB RAM - Chỉ dùng khi chạy dưới Local máy bạn)
             self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
-            print(f"💻 [VectorStore] Đang tải mô hình {embedding_model} trực tiếp vào RAM Local")
+            print(f"💻 [VectorStore] Cảnh báo: Không tìm thấy HF_TOKEN chuẩn, đang tải model trực tiếp vào RAM Local")
 
         conn_string = os.getenv("POSTGRES_VECTOR_URI")
         if not conn_string:
