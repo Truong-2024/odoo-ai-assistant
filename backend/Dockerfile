@@ -1,20 +1,25 @@
 FROM python:3.10-slim
 
-# Cài đặt các thư viện hệ thống cần thiết (bao gồm cả Tesseract OCR cho Python xử lý ảnh)
+# Cài đặt thư viện hệ thống
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
+# Thiết lập thư mục làm việc là /app
 WORKDIR /app
 
-# Copy file requirements cũ của bạn vào để cài đặt gói thư viện Python
+# Copy requirements trước để tận dụng Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy toàn bộ mã nguồn của thư mục backend vào trong Docker container
+# Copy toàn bộ code từ thư mục backend vào /app trong container
+# Lúc này cấu trúc bên trong sẽ là: /app/app/...
 COPY . .
 
-# Khởi chạy ứng dụng FastAPI bằng Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# THIẾT LẬP PYTHONPATH để Python tìm thấy module 'app'
+ENV PYTHONPATH=/app
+
+# Chạy ứng dụng ở cổng 10000 (Render bắt buộc)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]
