@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import uvicorn
 from datetime import datetime
+from app.core.database import Base, engine
 from app.core.config import UPLOADS_DIR
 from fastapi.staticfiles import StaticFiles
 # Load environment variables
@@ -112,6 +113,9 @@ async def ping():
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Odoo AI Assistant v2.0 starting up...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("📍 Database tables checked and created")
     logger.info("📍 Multi-Agent System initialized")
     logger.info("📍 Docs available at: http://localhost:8000/docs")
     
