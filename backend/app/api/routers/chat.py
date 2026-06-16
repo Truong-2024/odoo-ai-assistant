@@ -20,8 +20,8 @@ from app.core.config import UPLOADS_DIR
 
 # Import bộ tiện ích Query Rewriter động và thư viện chuẩn hóa chữ tiếng Việt
 import unicodedata
-# Đảm bảo bạn gọi đúng tên hàm đã cập nhật ở file query_rewriter (hoặc đổi tên hàm tùy ý bạn)
 from app.agents.utils.query_rewriter import rewrite_contextual_query_v2 as rewrite_contextual_query
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -44,7 +44,7 @@ def extract_file_text(file_path: str, file_ext: str) -> str:
 
 @router.post("/message")
 async def send_message(
-    request: Request,                                 
+    request: Request,                                
     message: str = Form(""),
     thread_id: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
@@ -213,6 +213,11 @@ async def send_message(
         if active_document:
             active_document = unicodedata.normalize('NFC', active_document)
 
+        # Kiểm tra xem tài liệu hoạt động hiện tại có phải định dạng ảnh hay không
+        has_active_image = False
+        if active_document:
+            has_active_image = any(active_document.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"])
+
         # ================= TIỀN XỬ LÝ ĐỊNH TUYẾN LOGIC THẦN TỐC =================
         query_lower = user_content.lower() if user_content else ""
         
@@ -235,7 +240,14 @@ async def send_message(
             return {"status": "cancelled", "detail": "Hủy trước khi chạy Agent"}
 
         # ================= LANGGRAPH WITH MONITOR =================
-        # Khởi tạo state cơ bản phục vụ cho LangGraph
+        # 🔥 BIẾN ĐỔI CHỈ THỊ TIN NHẮN ĐỂ KHÓA TAY SUPERVISOR ROUTER KHÔNG CHO BẺ LÁI SANG TEXT RAG
+        if is_image or has_active_image:
+            logger.info(f"📸 [FORCE VISION ROUTE] Phát hiện ngữ cảnh ảnh. Đang tiêm mã lệnh chặn đứng Supervisor bẻ lái.")
+            # Chèn hẳn chỉ thị tối cao hệ thống vào đầu câu hỏi để LLM Router của Supervisor bắt buộc chọn luồng vision
+            user_content = f"[VISION_FORCE] Hãy sử dụng Vision Agent để xem xét hình ảnh {active_document} và xử lý câu hỏi này: {user_content}"
+            is_auto_summary = False
+
+        # Khởi tạo state phục vụ cho LangGraph
         graph_state = {
             "messages": [HumanMessage(content=user_content)],
             "active_document": active_document,  
@@ -245,15 +257,11 @@ async def send_message(
             "is_auto_summary": is_auto_summary
         }
 
-        # 🔥 BẺ LÁI ĐỊNH TUYẾN CỨNG: Nếu là ảnh, áp đặt luồng chạy thẳng vào Vision Agent
-        # Ngăn chặn Supervisor tự ý định tuyến nhầm vào Document Agent
-        if is_image or (active_document and any(active_document.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"])):
-            logger.info(f"📸 [FORCE VISION ROUTE] Ép cấu trúc LangGraph chạy trực tiếp vào Vision Agent.")
+        # Ép chặt state đồ thị một lần nữa để làm điểm tựa an toàn vững chắc
+        if is_image or has_active_image:
             graph_state["current_agent"] = "vision"
+            graph_state["next_agent"] = "vision"
             graph_state["fallback_agent"] = "vision"
-            graph_state["pending_summary"] = False
-            graph_state["force_summary"] = False
-            graph_state["is_auto_summary"] = False
 
         langgraph_task = asyncio.create_task(
             langgraph_app.ainvoke(
@@ -311,12 +319,15 @@ async def send_message(
                 ON CONFLICT(thread_id) DO UPDATE SET updated_at = EXCLUDED.updated_at
             """, (thread_id, title, now, now))
 
+            # Dọn sạch thẻ [VISION_FORCE] trước khi lưu DB để hiển thị UI người dùng cho đẹp, không bị thô ráp
+            clean_db_message = final_message if final_message else f"📎 {file_name}"
+
             cur.execute("""
                 INSERT INTO chat_messages (thread_id, message_id, role, content, created_at, metadata)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (
                 thread_id, user_msg_id, "user",
-                final_message if final_message else f"📎 {file_name}",
+                clean_db_message,
                 now,
                 json.dumps({"file_name": file_name, "file_url": file_url, "is_file_card": is_file_card}) if file_name else None
             ))
@@ -333,7 +344,7 @@ async def send_message(
             "ai_message_id": ai_msg_id,
             "response": result["messages"][-1].content,
             "thread_id": thread_id,
-            "current_agent": result.get("current_agent", "vision" if is_image else "document"),
+            "current_agent": result.get("current_agent", "vision" if (is_image or has_active_image) else "document"),
             "status": "success"
         }
 
