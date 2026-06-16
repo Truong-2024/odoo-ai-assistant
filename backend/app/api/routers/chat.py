@@ -44,7 +44,7 @@ def extract_file_text(file_path: str, file_ext: str) -> str:
 
 @router.post("/message")
 async def send_message(
-    request: Request,                                 
+    request: Request,                                
     message: str = Form(""),
     thread_id: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
@@ -104,18 +104,27 @@ async def send_message(
                     os.remove(file_path)
                 return {"status": "cancelled"}
 
-            doc_rag = DocumentRAG()
-            try:
-                await doc_rag.index_document(
-                    file_path=file_path,
-                    filename=file_name,
-                    request=request  
-                )
-            except Exception as e:
-                logger.error(f"Index document error: {e}")
+            # 🔥 SỬA LỖI: Kiểm tra định dạng file để định tuyến thông minh
+            is_image = ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]
 
+            if is_image:
+                # 📸 FILE ẢNH -> Bỏ qua Vector DB để tránh lỗi Unstructured, giữ RAM an toàn
+                logger.info(f"📸 [IMAGE ROUTING] Phát hiện file ảnh: {file_name} -> Chuyển thẳng sang cho Vision Agent")
+            else:
+                # 📄 FILE VĂN BẢN (PDF...) -> Tiến hành băm nhỏ nạp vào Vector DB như cũ
+                doc_rag = DocumentRAG()
+                try:
+                    await doc_rag.index_document(
+                        file_path=file_path,
+                        filename=file_name,
+                        request=request  
+                    )
+                except Exception as e:
+                    logger.error(f"Index document error: {e}")
+
+            # Đóng gói dữ liệu meta gọn gàng để truyền sang LangGraph State
             file_meta = {
-                "type": "file",
+                "type": "image" if is_image else "file",
                 "fileName": file_name,
                 "filePath": str(file_path),
                 "fileUrl": file_url,
@@ -126,8 +135,14 @@ async def send_message(
             raise HTTPException(status_code=400, detail="Vui lòng nhập tin nhắn hoặc upload file")
 
         # ================= DECIDE MODE =================
-        is_auto_summary = (file is not None) and (not final_message)
-        user_content = f"[AUTO_SUMMARIZE] File: {file_name}" if is_auto_summary else final_message or f"Phân tích file: {file_name}"
+        # Nếu là file ảnh thì không ép buộc chạy tính năng [AUTO_SUMMARIZE] kiểu văn bản thô
+        is_auto_summary = (file is not None) and (not final_message) and (not is_image if file else True)
+        
+        if file and is_image and not final_message:
+            user_content = f"Phân tích và đọc hiểu hình ảnh này giúp tôi: {file_name}"
+        else:
+            user_content = f"[AUTO_SUMMARIZE] File: {file_name}" if is_auto_summary else final_message or f"Phân tích file: {file_name}"
+            
         active_document = file_name or old_active_document
 
         # ================= DYNAMIC CONTEXT EXTRACTION FOR QUERY REWRITER =================
@@ -178,29 +193,26 @@ async def send_message(
             active_document = active_files_in_thread[0]
             logger.info(f"🔄 [THREAD HISTORY RECOVERY] Đã khôi phục hoạt động tài liệu từ DB: {active_document}")
 
-        # 🔥 THAY ĐỔI QUAN TRỌNG: Tích hợp đón nhận cấu trúc dữ liệu mới từ Rewriter Động
+        # Tích hợp đón nhận cấu trúc dữ liệu mới từ Rewriter Động
         if user_content and not is_auto_summary:
             rewriter_output = await rewrite_contextual_query(
                 current_query=user_content,
                 chat_history=chat_history_from_db,
                 active_files=active_files_in_thread
             )
-            # Khai thác dữ liệu từ Dict trả về
             if isinstance(rewriter_output, dict):
                 user_content = rewriter_output.get("clean_query", user_content)
-                # ChatGPT style: Ép luồng gán file context hoạt động về đúng file được AI dự đoán!
                 predicted_file = rewriter_output.get("predicted_file")
                 if predicted_file and predicted_file in active_files_in_thread:
                     active_document = predicted_file
                     logger.info(f"🎯 [DYNAMIC ROUTING] Đã chuyển đổi ngữ cảnh tài liệu thông minh sang: {active_document}")
             else:
-                # Phương án dự phòng (fallback) nếu rewriter trả về chuỗi thuần túy
                 user_content = rewriter_output
 
         if active_document:
             active_document = unicodedata.normalize('NFC', active_document)
 
-        # ================= 🔥 TIỀN XỬ LÝ ĐỊNH TUYẾN LOGIC THẦN TỐC =================
+        # ================= TIỀN XỬ LÝ ĐỊNH TUYẾN LOGIC THẦN TỐC =================
         query_lower = user_content.lower() if user_content else ""
         
         summary_keywords = ["tóm tắt", "tổng quan", "khái quát nội dung"]
@@ -209,7 +221,7 @@ async def send_message(
         structure_keywords = ["bao nhiêu chương", "bằng nào chương", "có mấy chương", "mục lục", "cấu trúc"]
         is_structure_query = any(kw in query_lower for kw in structure_keywords)
 
-        if is_explicit_summary_query:
+        if is_explicit_summary_query and (file and not ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]):
             logger.info("🎯 [GLOBAL QUERY DETECTED] Phát hiện yêu cầu tóm tắt tài liệu rõ ràng. Kích hoạt force_summary.")
             is_auto_summary = True
         elif is_structure_query:
@@ -222,7 +234,6 @@ async def send_message(
             return {"status": "cancelled", "detail": "Hủy trước khi chạy Agent"}
 
         # ================= LANGGRAPH WITH MONITOR =================
-        # Biến active_document ở đây đã được cập nhật động và chính xác theo file cũ/mới người dùng hỏi
         langgraph_task = asyncio.create_task(
             langgraph_app.ainvoke(
                 {
