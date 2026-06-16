@@ -8,31 +8,35 @@ load_dotenv()
 
 class DocumentVectorStore:
     def __init__(self):
-        # Lấy tên model từ .env (mặc định là all-MiniLM-L6-v2)
-        embedding_model = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-        
-        # Xử lý token đầu vào sạch sẽ, loại bỏ khoảng trắng thừa
+        # 1. ƯU TIÊN SỐ 1: Kiểm tra COHERE API (Tốt nhất cho Render Free, né lỗi mạng HF)
+        cohere_api_key = os.getenv("COHERE_API_KEY")
         hf_token = os.getenv("HF_TOKEN")
-        if hf_token:
-            hf_token = hf_token.strip()
-
-        # 🔥 SỬA LỖI MẠNG & RAM: Ép hệ thống dùng Endpoint độc lập khi có token hợp lệ
-        if hf_token and hf_token.startswith("hf_"):
-            from langchain_huggingface import HuggingFaceEndpointEmbeddings
+        
+        if cohere_api_key:
+            from langchain_cohere import CohereEmbeddings
+            self.embeddings = CohereEmbeddings(
+                cohere_api_key=cohere_api_key.strip(),
+                model="embed-multilingual-v3.0"  # Model đa ngôn ngữ cực đỉnh, hỗ trợ tiếng Việt rất tốt
+            )
+            print(f"🚀 [VectorStore] Kích hoạt thành công COHERE API Cloud (0MB RAM & Cực kỳ ổn định)")
             
-            # Khởi tạo qua cổng kết nối Endpoint Cloud chuyên dụng (0MB RAM - Chống NameResolutionError)
+        # 2. ƯU TIÊN SỐ 2: Fallback sang Hugging Face Endpoint Cloud
+        elif hf_token and hf_token.strip().startswith("hf_"):
+            from langchain_huggingface import HuggingFaceEndpointEmbeddings
+            embedding_model = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
             self.embeddings = HuggingFaceEndpointEmbeddings(
                 model=embedding_model,
-                huggingfacehub_api_token=hf_token,
+                huggingfacehub_api_token=hf_token.strip(),
                 task="feature-extraction"
             )
-            print(f"🚀 [VectorStore] Kích hoạt thành công HuggingFace Endpoint Cloud (0MB RAM)")
+            print(f"🚀 [VectorStore] Sử dụng HuggingFace Endpoint Cloud (0MB RAM)")
+            
+        # 3. ƯU TIÊN SỐ 3: Chạy offline dưới máy Local của bạn
         else:
             from langchain_huggingface import HuggingFaceEmbeddings
-            
-            # Bản tải cục bộ về máy (Tốn ~400MB RAM - Chỉ dùng khi chạy dưới Local máy bạn)
+            embedding_model = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
             self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
-            print(f"💻 [VectorStore] Cảnh báo: Không tìm thấy HF_TOKEN chuẩn, đang tải model trực tiếp vào RAM Local")
+            print(f"💻 [VectorStore] Cảnh báo: Không có API key, tải model trực tiếp vào RAM Local")
 
         conn_string = os.getenv("POSTGRES_VECTOR_URI")
         if not conn_string:
