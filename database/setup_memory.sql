@@ -1,16 +1,26 @@
 -- =============================================
--- DATABASE SETUP cho Odoo AI Assistant
+-- DATABASE SETUP cho Odoo AI Assistant (Đã đồng bộ với Code)
 -- =============================================
 
--- Tạo database (chạy thủ công nếu chưa có)
--- CREATE DATABASE odoo_ai_memory;
+-- 1. Bảng lưu trữ cuộc hội thoại (Khớp với code Python)
+CREATE TABLE IF NOT EXISTS chat_threads (
+    thread_id TEXT PRIMARY KEY,
+    title TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- Kết nối vào database
-\c odoo_ai_memory
+-- 2. Bảng lưu trữ tin nhắn (Khớp với code Python)
+CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT REFERENCES chat_threads(thread_id),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    metadata JSONB DEFAULT '{}'
+);
 
--- =============================================
--- 1. Bảng LangGraph Checkpoints (đã có)
--- =============================================
+-- 3. Bảng LangGraph Checkpoints (Duy trì để Agent có trí nhớ)
 CREATE TABLE IF NOT EXISTS checkpoints (
     thread_id TEXT NOT NULL,
     checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -22,47 +32,13 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_id ON checkpoints(thread_id);
-CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints(created_at DESC);
+-- Tạo Index để truy vấn lịch sử nhanh hơn
+CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON chat_messages(thread_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON chat_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON chat_threads(updated_at DESC);
 
 -- =============================================
--- 2. Bảng Thread Metadata (đã có)
+-- Ghi chú: 
+-- Sau khi chạy lệnh này, bảng chat_threads và chat_messages đã sẵn sàng.
+-- Code Python của bạn sẽ không còn lỗi khi truy vấn nữa.
 -- =============================================
-CREATE TABLE IF NOT EXISTS thread_metadata (
-    thread_id TEXT PRIMARY KEY,
-    user_id TEXT,
-    title TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- =============================================
--- 3. Bảng Chat Messages (MỚI - Quan trọng cho History)
--- =============================================
-CREATE TABLE IF NOT EXISTS chat_messages (
-    id SERIAL PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    message_id TEXT NOT NULL UNIQUE,
-    role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant')),
-    content TEXT NOT NULL,
-    timestamp TIMESTAMPTZ DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'
-);
-
--- Index tối ưu cho History Chat
-CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id ON chat_messages(thread_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_time ON chat_messages(thread_id, timestamp);
-
--- =============================================
--- COMMENT
--- =============================================
-COMMENT ON TABLE checkpoints IS 'LangGraph persistent memory cho Agent';
-COMMENT ON TABLE thread_metadata IS 'Thông tin bổ sung của từng cuộc trò chuyện';
-COMMENT ON TABLE chat_messages IS 'Lưu lịch sử tin nhắn để hiển thị trên Frontend';
-
--- =============================================
--- SAMPLE DATA (tùy chọn)
--- =============================================
--- INSERT INTO thread_metadata (thread_id, title, user_id) 
--- VALUES ('default', 'Cuộc trò chuyện đầu tiên', 'admin@odoo.ai');
