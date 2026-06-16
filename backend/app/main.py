@@ -51,9 +51,14 @@ print(f"✅ Uploads directory mounted at: {UPLOADS_DIR}")  # Debug
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 # ====================== CORS MIDDLEWARE ======================
+origins = [
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "https://odoo-ai-assistant-u84u.vercel.app", # Link Vercel chính chủ hiện tại của bạn
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # Trong production nên giới hạn origin
+    allow_origins=origins, # Chỉ đích danh người nhà, giải quyết triệt để xung đột credentials
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
