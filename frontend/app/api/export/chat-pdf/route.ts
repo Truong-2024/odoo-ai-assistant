@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
 
     const page = await browser.newPage();
     
-    // ✅ Đã sửa
     await page.setContent(html, { 
       waitUntil: 'domcontentloaded' 
     });
@@ -38,8 +37,7 @@ export async function POST(req: NextRequest) {
     });
 
     await browser.close();
-    console.log("TYPE:", typeof pdf);
-    console.log("CTOR:", pdf?.constructor?.name);
+    
     return new Response(Buffer.from(pdf), {
       status: 200,
       headers: {
@@ -60,11 +58,12 @@ export async function POST(req: NextRequest) {
 }
 
 function generateHTML(messages: any[], chatTitle: string): string {
-  const safeContent = (content: string) => {
+  // ✅ Đã sửa: Ép kiểu 'as string' để TypeScript không bắt bẻ trường hợp Promise bất đồng bộ
+  const safeContent = (content: string): string => {
     return marked.parse(content || '', { 
       breaks: true,
       gfm: true 
-    });
+    }) as string;
   };
 
   return `
@@ -172,4 +171,4 @@ function generateHTML(messages: any[], chatTitle: string): string {
     .join('')}
 </body>
 </html>`;
-} 
+}
