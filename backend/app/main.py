@@ -55,11 +55,11 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 origins = [
     "http://localhost:3000",
     "http://localhost:8000",
-    "https://odoo-ai-assistant-u84u.vercel.app", # Link Vercel chính chủ hiện tại của bạn
+    "https://odoo-ai-assistant-u84u.vercel.app", 
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, # Chỉ đích danh người nhà, giải quyết triệt để xung đột credentials
+    allow_origins=origins, 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,16 +113,17 @@ async def ping():
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Odoo AI Assistant v2.0 starting up...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("📍 Database tables checked and created")
+    try:
+        # Sử dụng run_sync để kiểm tra và tạo bảng một cách an toàn
+        async with engine.begin() as conn:
+            # SQLAlchemy tự động kiểm tra bảng tồn tại nếu dùng Base.metadata.create_all
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("📍 Database tables checked and ready")
+    except Exception as e:
+        logger.error(f"❌ Error during database startup: {e}")
+        
     logger.info("📍 Multi-Agent System initialized")
     logger.info("📍 Docs available at: http://localhost:8000/docs")
-    
-    # TODO: Có thể thêm auto-ingest company data ở đây nếu cần
-    # from app.rag.company.company_ingest import CompanyDataIngestor
-    # ingestor = CompanyDataIngestor()
-    # ingestor.ingest(clear_old=False)
 
 
 # ====================== SHUTDOWN EVENT ======================
