@@ -61,7 +61,8 @@ export const chatAPI = {
       config.onUploadProgress = (progressEvent: any) => {
         if (progressEvent.total) {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          options.onProgress(percentCompleted);
+          // ✅ Đã sửa: Thêm dấu ?. để gọi hàm an toàn phòng trường hợp undefined
+          options.onProgress?.(percentCompleted);
         }
       };
     }
@@ -86,7 +87,7 @@ export const chatAPI = {
     return res.data;
   },
 
-  // === UPLOAD FILE (Giữ nguyên, đã tốt) ===
+  // === UPLOAD FILE ===
   uploadFile: async (file: File, options?: { 
     signal?: AbortSignal; 
     onProgress?: (progress: number) => void 
@@ -102,7 +103,8 @@ export const chatAPI = {
       config.onUploadProgress = (progressEvent: any) => {
         if (progressEvent.total) {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          options.onProgress(percentCompleted);
+          // ✅ Đã sửa: Thêm dấu ?. tại đây để đồng bộ an toàn luôn
+          options.onProgress?.(percentCompleted);
         }
       };
     }
@@ -111,4 +113,4 @@ export const chatAPI = {
 
     return res.data;
   },
-}; 
+};
