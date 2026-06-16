@@ -103,3 +103,4 @@ python-multipart==0.0.20
 PyJWT==2.10.1
 pytesseract>=0.3.10
 Pillow>=10.0.0
+langchain-huggingface
